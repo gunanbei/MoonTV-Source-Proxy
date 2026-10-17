@@ -28,8 +28,21 @@ func main() {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
+		DisableCompression:    true,
 	}
 
+	mux := newHandler(transport)
+
+	listen := os.Getenv("LISTEN_ADDR")
+	if listen == "" {
+		listen = ":8080"
+	}
+	server := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	log.Printf("video source proxy listening on %s", listen)
+	log.Fatal(server.ListenAndServe())
+}
+
+func newHandler(transport http.RoundTripper) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -42,26 +55,17 @@ func main() {
 			return
 		}
 
-		// Use the supplied upstream for this request, while forwarding the original path.
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.Transport = transport
 		originalDirector := proxy.Director
 		proxy.Director = func(request *http.Request) {
 			originalDirector(request)
 			request.URL.RawQuery = query
-			request.Header.Set("Accept-Encoding", "identity")
 		}
 		proxy.ModifyResponse = modifyJSONResponse
 		proxy.ServeHTTP(w, r)
 	})
-
-	listen := os.Getenv("LISTEN_ADDR")
-	if listen == "" {
-		listen = ":8080"
-	}
-	server := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	log.Printf("video source proxy listening on %s", listen)
-	log.Fatal(server.ListenAndServe())
+	return mux
 }
 
 // parseProxyTarget reads the upstream from ?proxy=<url>. Query parameters
